@@ -1,0 +1,57 @@
+FROM ubuntu:16.04
+
+MAINTAINER Petar Maric <petarmaric@uns.ac.rs>
+
+# Fix Docker-specific Ubuntu issues
+# (see https://journal.paul.querna.org/articles/2013/10/15/docker-ubuntu-on-rackspace/ for details)
+ENV DEBIAN_FRONTEND noninteractive
+ENV INITRD No
+RUN apt-get update -y
+RUN apt-get install software-properties-common -y
+RUN add-apt-repository ppa:deadsnakes/ppa
+RUN apt-get update -y
+#RUN apt-get install python3.6 -y
+#RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.5 1
+#RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.6 2
+#RUN update-alternatives --auto python3
+# Update the Ubuntu package index and install the required Ubuntu packages
+RUN apt-get update -qq && apt-get install -qq -y \
+  python-dev \
+  python-gmpy \
+  python-pip \
+  supervisor 
+RUN pip install --upgrade pip
+
+# Install the required Python packages
+# Celery has to be installed via pip, as Ubuntu distributes an older version which has a critical bug involving chords
+# (see http://celery.readthedocs.org/en/latest/changelog.html for details)
+RUN pip install "beam_integrals" "celery[librabbitmq,redis]==3.1.18" "scipy"
+
+# Parameterize this Dockerfile, by storing the configuration within environment variables 
+ENV MAX_CPU_CORES 1
+ENV COMPUTER_TYPE worker
+ENV SERVER_NAME server
+ENV WORKER_LIST worker
+
+# App specific configuration, based on 'beam_integrals' defaults
+ENV PDAJ_MAX_MODE 100
+ENV PDAJ_DECIMAL_PRECISION 155
+ENV PDAJ_NORMALIZE_INTEGRALS_SMALLER_THAN 1e-9
+
+# Supervisor configuration for Celery
+COPY docker/files/supervisor/celery.conf /etc/supervisor/conf.d/celery.conf
+
+# Deploy the app
+COPY pdaj /code/pdaj/
+ENV PYTHONPATH /code
+
+# Configuration script (will be applied only if ENV 'DOCKER_CONFIGURE_SCRIPT' is set)
+ENV DOCKER_CONFIG_SCRIPT docker-configure.py
+COPY docker/${DOCKER_CONFIG_SCRIPT} /
+RUN chmod +x /${DOCKER_CONFIG_SCRIPT}
+
+# Starter script
+COPY docker/docker-entrypoint.sh /
+RUN chmod +x /docker-entrypoint.sh
+ENTRYPOINT ["/docker-entrypoint.sh"]
+CMD ["supervisord", "-n", "-c", "/etc/supervisor/supervisord.conf"]
